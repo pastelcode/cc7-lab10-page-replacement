@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(page_replacement C)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(SOURCES
     src/main.c
     src/input.c
