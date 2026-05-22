@@ -14,7 +14,7 @@ cc7-lab10-page-replacement/
 │   ├── algorithms.c              # Agent 2: FIFO, MIN, LRU implementations
 │   ├── trace.h                   # Agent 3: Trace & output header
 │   ├── trace.c                   # Agent 3: Trace printing & comparison table
-│   └── second_chance.h/c         # Agent 3 (extra): Second Chance / Clock policy
+│   └── clock.h/c                 # Agent 3 (extra): Clock policy
 ├── test_data/
 │   └── sample.txt                # Sample input file (optional)
 ├── CMakeLists.txt                # Build automation
@@ -33,7 +33,7 @@ The assignment is split across **3 agents**, each owning a distinct, non-overlap
 | ------- | -------------------------------------------------------------------------- | ------------------------- |
 | Agent 1 | `src/input.h`, `src/input.c`, `src/main.c`                                 | Nothing                   |
 | Agent 2 | `src/algorithms.h`, `src/algorithms.c`                                     | `input.h` (structs)       |
-| Agent 3 | `src/trace.h`, `src/trace.c`, `src/second_chance.h`, `src/second_chance.c` | `input.h`, `algorithms.h` |
+| Agent 3 | `src/trace.h`, `src/trace.c`, `src/clock.h`, `src/clock.c` | `input.h`, `algorithms.h` |
 
 ### Shared data types (coordinate across agents)
 
@@ -123,7 +123,7 @@ The `main.c` file must:
 
 1. Call `parse_input(argc, argv)` from `input.c` → get `InputData`.
 2. Print a header (optional) showing `N` and the reference sequence.
-3. For each algorithm (FIFO, MIN, LRU, Second Chance):
+3. For each algorithm (FIFO, MIN, LRU, Clock):
    - Call the `run_*` function from Agent 2 or Agent 3.
    - Let the algorithm function handle trace printing internally.
    - Store or print the totals after each run.
@@ -173,7 +173,7 @@ InputData parse_input(int argc, char *argv[]);
 - [ ] `CMakeLists.txt` created at the project root:
   - [ ] `cmake_minimum_required(VERSION 3.10)`.
   - [ ] `project(page_replacement C)`.
-  - [ ] `add_executable(page_replacement src/main.c src/input.c src/algorithms.c src/trace.c src/second_chance.c)`.
+  - [ ] `add_executable(page_replacement src/main.c src/input.c src/algorithms.c src/trace.c src/clock.c)`.
   - [ ] `target_compile_options(page_replacement PRIVATE -Wall -Wextra -std=c99 -g)`.
 - [ ] Project builds successfully: `mkdir build && cd build && cmake .. && make`.
 - [ ] Code compiles cleanly (`gcc -Wall -Wextra -std=c99 -c src/input.c`).
@@ -370,7 +370,7 @@ void print_algorithm_totals(int hits, int misses);
 
 ---
 
-## Agent 3 — Trace Output, Comparison Summary & Second Chance (`src/trace.h`, `src/trace.c`, `src/second_chance.h`, `src/second_chance.c`)
+## Agent 3 — Trace Output, Comparison Summary & Clock (`src/trace.h`, `src/trace.c`, `src/clock.h`, `src/clock.c`)
 
 ### Responsibility
 
@@ -378,7 +378,7 @@ Agent 3 has **three deliverables**:
 
 1. **Trace formatting functions** — `print_trace_line()`, `print_algorithm_header()`, `print_algorithm_totals()` — used by Agent 2's algorithm functions.
 2. **Comparison summary table** — `print_comparison_summary()` — called by `main.c` after all algorithms run.
-3. **Second Chance (Clock) algorithm** — a fourth policy, implemented in `second_chance.c`.
+3. **Clock (Second Chance) algorithm** — a fourth policy, implemented in `clock.c`.
 
 ### 3.1 Trace Formatting (`src/trace.h`, `src/trace.c`)
 
@@ -398,7 +398,7 @@ step  ref   result  frames           victim
 ----- ----- ------  ---------------  ------
 ```
 
-- The algorithm name is passed as a string: `"FIFO"`, `"MIN"`, `"LRU"`, or `"SECOND CHANCE"`.
+- The algorithm name is passed as a string: `"FIFO"`, `"MIN"`, `"LRU"`, or `"CLOCK"`.
 - The separator lines use `=` (50 chars) for the outer and `-` for the column headers.
 - Column widths (suggested):
   - `step`: 5 chars, right‑aligned
@@ -464,7 +464,7 @@ Algorithm       Hits    Misses  Hit Rate
 FIFO               12        8    60.00%
 MIN                14        6    70.00%
 LRU                12        8    60.00%
-SECOND CHANCE      12        8    60.00%
+CLOCK              12        8    60.00%
 ========================================
 ```
 
@@ -473,11 +473,11 @@ SECOND CHANCE      12        8    60.00%
 - Use a separator line (`---`) before the footer `===`.
 - All four results come from `AlgorithmResult` structs passed by `main.c`.
 
-### 3.3 Second Chance / Clock Algorithm (`src/second_chance.h`, `src/second_chance.c`)
+### 3.3 Clock (Second Chance) Algorithm (`src/clock.h`, `src/clock.c`)
 
 #### Policy Description
 
-Second Chance is an enhancement of FIFO that uses a **reference bit** per frame. It's also called the **Clock algorithm** because frames are arranged in a circular list.
+Clock is an enhancement of FIFO that uses a **reference bit** per frame. It is also called the **Second Chance algorithm** because frames are arranged in a circular list.
 
 - Each frame has: a page ID, and a **reference bit** (0 or 1).
 - A **clock hand** (pointer) cycles through frames circularly.
@@ -547,10 +547,10 @@ int frame_count;  // how many frames are occupied (0..N)
 #### Function Signature
 
 ```c
-AlgorithmResult run_second_chance(const InputData *input);
+AlgorithmResult run_clock(const InputData *input);
 ```
 
-Implemented in `src/second_chance.c`, declared in `src/second_chance.h`.
+Implemented in `src/clock.c`, declared in `src/clock.h`.
 
 Same structure as Agent 2's functions: prints header, loops through references, prints trace lines, prints totals, returns `AlgorithmResult`.
 
@@ -580,14 +580,14 @@ Same structure as Agent 2's functions: prints header, loops through references, 
 - [ ] `print_comparison_summary()`:
   - [ ] Title centered or labeled.
   - [ ] Table with columns: Algorithm, Hits, Misses, Hit Rate.
-  - [ ] All four algorithms listed (FIFO, MIN, LRU, SECOND CHANCE).
+  - [ ] All four algorithms listed (FIFO, MIN, LRU, CLOCK).
   - [ ] Hit rate with 2 decimals.
   - [ ] Closing separator line.
 
-#### Second Chance / Clock Algorithm
+#### Clock (Second Chance) Algorithm
 
-- [ ] `src/second_chance.h` created — declares `run_second_chance()`.
-- [ ] `src/second_chance.c` implements `run_second_chance()`.
+- [ ] `src/clock.h` created — declares `run_clock()`.
+- [ ] `src/clock.c` implements `run_clock()`.
 - [ ] `ClockFrame` struct defined with `page` and `ref` fields.
 - [ ] `clock_hand` initialized to 0 at start.
 - [ ] On hit: sets reference bit of the matching frame to 1. Does **not** move the clock hand.
@@ -598,15 +598,15 @@ Same structure as Agent 2's functions: prints header, loops through references, 
   - [ ] Victim correctly identified.
   - [ ] New page loaded with `ref = 1`.
   - [ ] Clock hand advances **once more** after replacement.
-- [ ] Calls `print_algorithm_header("SECOND CHANCE", N)` at start.
+- [ ] Calls `print_algorithm_header("CLOCK", N)` at start.
 - [ ] Calls `print_trace_line()` for each reference.
 - [ ] Prints totals at end.
 - [ ] Returns correct `AlgorithmResult`.
-- [ ] Code compiles: `gcc -Wall -Wextra -c trace.c second_chance.c`.
+- [ ] Code compiles: `gcc -Wall -Wextra -c trace.c clock.c`.
 
 ### Comparison to FIFO
 
-The Second Chance algorithm is designed to improve upon FIFO by giving pages a "second chance" before eviction. On the reference dataset with N=3, Second Chance may perform **identically to FIFO** or slightly better, depending on the access pattern. Document the observed result in the trace output (the comparison table handles this automatically).
+The Clock algorithm is designed to improve upon FIFO by giving pages a "second chance" before eviction. On the reference dataset with N=3, Clock may perform **identically to FIFO** or slightly better, depending on the access pattern. Document the observed result in the trace output (the comparison table handles this automatically).
 
 ---
 
@@ -625,7 +625,7 @@ set(SOURCES
     src/input.c
     src/algorithms.c
     src/trace.c
-    src/second_chance.c
+    src/clock.c
 )
 
 add_executable(page_replacement ${SOURCES})
@@ -664,7 +664,7 @@ Running with the required dataset:
 
 - **MIN** should have the **fewest misses** (fewest page faults) — this is the defining property of the optimal algorithm.
 - **FIFO** and **LRU** typically have more misses; on this specific string with N=3, both will likely have the same or similar counts.
-- **Second Chance** may match FIFO or LRU depending on the pattern.
+- **Clock** may match FIFO or LRU depending on the pattern.
 - Total references: 20, so `hits + misses == 20` for every algorithm.
 
 ---
@@ -681,8 +681,8 @@ Running with the required dataset:
 | `src/algorithms.c`             | Agent 2  | FIFO, MIN, LRU implementations                |
 | `src/trace.h`                  | Agent 3  | Trace & summary function declarations         |
 | `src/trace.c`                  | Agent 3  | Trace formatting, comparison table            |
-| `src/second_chance.h`          | Agent 3  | `run_second_chance` declaration               |
-| `src/second_chance.c`          | Agent 3  | Second Chance / Clock implementation          |
+| `src/clock.h`                  | Agent 3  | `run_clock` declaration                       |
+| `src/clock.c`                  | Agent 3  | Clock (Second Chance) implementation          |
 | `CMakeLists.txt`               | Agent 1  | Build automation                              |
 | `README.md`                    | Agent 1  | Usage and build instructions                  |
 
