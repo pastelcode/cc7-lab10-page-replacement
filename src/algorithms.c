@@ -35,13 +35,3 @@ AlgorithmResult run_lru(const InputData *input) {
   return result;
 }
 
-AlgorithmResult run_second_chance(const InputData *input) {
-  // TODO: Implement by Agent 2
-  print_algorithm_header("SECOND CHANCE", input->N);
-
-  // FIXME: Stub — returns zeros
-  AlgorithmResult result = {0, 0};
-
-  print_algorithm_totals(result.hits, result.misses);
-  return result;
-}

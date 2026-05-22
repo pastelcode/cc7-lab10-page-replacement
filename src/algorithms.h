@@ -6,6 +6,5 @@
 AlgorithmResult run_fifo(const InputData *input);
 AlgorithmResult run_min(const InputData *input);
 AlgorithmResult run_lru(const InputData *input);
-AlgorithmResult run_second_chance(const InputData *input);
 
 #endif // ALGORITHMS_H
