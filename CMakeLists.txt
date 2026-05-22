@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.10)
+project(page_replacement C)
+
+set(SOURCES
+    src/main.c
+    src/input.c
+    src/algorithms.c
+    src/trace.c
+)
+
+add_executable(page_replacement ${SOURCES})
+
+target_compile_options(page_replacement PRIVATE -Wall -Wextra -std=c99 -g)

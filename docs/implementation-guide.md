@@ -1,0 +1,697 @@
+# Page Replacement — Implementation Guide
+
+## Project Structure
+
+```
+cc7-lab10-page-replacement/
+├── docs/
+│   └── implementation-guide.md   # This file
+├── src/
+│   ├── main.c                    # Entry point: ties everything together
+│   ├── input.h                   # Agent 1: Input parsing header
+│   ├── input.c                   # Agent 1: Input parsing implementation
+│   ├── algorithms.h              # Agent 2: Algorithm structs & signatures
+│   ├── algorithms.c              # Agent 2: FIFO, MIN, LRU implementations
+│   ├── trace.h                   # Agent 3: Trace & output header
+│   ├── trace.c                   # Agent 3: Trace printing & comparison table
+│   └── second_chance.h/c         # Agent 3 (extra): Second Chance / Clock policy
+├── test_data/
+│   └── sample.txt                # Sample input file (optional)
+├── CMakeLists.txt                # Build automation
+└── README.md                     # Usage instructions
+```
+
+---
+
+## Division of Work
+
+The assignment is split across **3 agents**, each owning a distinct, non-overlapping set of source files. Agents should work in order — Agent 2 and Agent 3 depend on Agent 1's interfaces, and Agent 3 depends on Agent 2's algorithm implementations.
+
+| Agent   | Files owned                                                                | Depends on                |
+| ------- | -------------------------------------------------------------------------- | ------------------------- |
+| Agent 1 | `src/input.h`, `src/input.c`, `src/main.c`                                 | Nothing                   |
+| Agent 2 | `src/algorithms.h`, `src/algorithms.c`                                     | `input.h` (structs)       |
+| Agent 3 | `src/trace.h`, `src/trace.c`, `src/second_chance.h`, `src/second_chance.c` | `input.h`, `algorithms.h` |
+
+### Shared data types (coordinate across agents)
+
+All agents must agree on these types. Define them in `input.h` (Agent 1) so Agents 2 and 3 can include them:
+
+```c
+// Maximum size for the reference sequence (safe bound)
+#define MAX_SEQUENCE_LEN 1024
+
+// Maximum number of frames (safe bound)
+#define MAX_FRAMES 64
+
+// Represents the parsed input
+typedef struct {
+    int N;                         // number of physical frames
+    int ref_len;                   // length of the reference sequence
+    int ref_seq[MAX_SEQUENCE_LEN]; // the reference sequence (page IDs)
+} InputData;
+
+// Represents the result of running one algorithm
+typedef struct {
+    int hits;
+    int misses;
+    // Optionally store per-step trace data if Agent 2 computes it
+} AlgorithmResult;
+```
+
+> **Agent 1** defines these in `input.h`. **Agent 2** and **Agent 3** `#include "input.h"`.
+
+The trace goes directly to `stdout`. No intermediate data structures are required between Agent 2 and Agent 3 — Agent 3 calls the algorithm functions from Agent 2 and prints output inline (see Agent 3's section for details on function signatures).
+
+---
+
+## Agent 1 — Input Parsing & Validation (`src/input.h`, `src/input.c`, `src/main.c`, `CMakeLists.txt`)
+
+### Responsibility
+
+Read and validate `N` (frame count) and the reference sequence from the command line. Provide a clean `InputData` struct to the rest of the program. Also write `main.c` as the entry point that orchestrates the other agents' work.
+
+### Functional Specification
+
+#### 1.1 CLI Interface
+
+The program is invoked as:
+
+```
+./page_replacement N "p1 p2 p3 ... pn"
+```
+
+- **First argument**: `N` — a positive integer (≥ 1), maximum 64.
+- **Second argument**: a single string of space‑separated page IDs (integers ≥ 0). This is the reference sequence, in order.
+
+**Example invocation:**
+
+```
+./page_replacement 3 "7 0 1 2 0 3 0 4 2 3 0 3 2 1 2 0 1 7 0 1"
+```
+
+#### 1.2 Validation Rules (in order of checking)
+
+| #   | Check                                             | Error message (example)                                              |
+| --- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| 1   | Exactly 2 arguments provided (after program name) | `"Usage: ./page_replacement N \"p1 p2 ...\""`                        |
+| 2   | `N` is a valid integer                            | `"Error: N must be an integer."`                                     |
+| 3   | `N ≥ 1`                                           | `"Error: N must be >= 1."`                                           |
+| 4   | `N ≤ MAX_FRAMES`                                  | `"Error: N must be <= %d."` (with MAX_FRAMES)                        |
+| 5   | Reference string is not empty (after trimming)    | `"Error: reference string must not be empty."`                       |
+| 6   | Every token is a valid non‑negative integer       | `"Error: invalid token '%s' in reference string."`                   |
+| 7   | Sequence length ≤ `MAX_SEQUENCE_LEN`              | `"Error: reference string too long (max %d)."` with MAX_SEQUENCE_LEN |
+| 8   | No negative page IDs allowed                      | `"Error: page IDs must be >= 0 (got %d)."`                           |
+
+On any validation failure, print the error to `stderr` and `exit(EXIT_FAILURE)`.
+
+On success, populate the `InputData` struct and return it to `main.c`.
+
+#### 1.3 Parsing Implementation Notes
+
+- Use `strtok()` or `sscanf()` in a loop to extract tokens from the second CLI argument.
+- Use `atoi()` or `strtol()` for conversion. Prefer `strtol()` for better error detection (check `*endptr`).
+- Store parsed page IDs into `InputData.ref_seq[]` and set `InputData.ref_len`.
+- Whitespace collapsing: multiple consecutive spaces are fine; `strtok()` with `" "` handles this naturally.
+- Trailing/leading spaces: `strtok()` skips them; no extra trimming needed.
+
+#### 1.4 `main.c` Responsibilities
+
+The `main.c` file must:
+
+1. Call `parse_input(argc, argv)` from `input.c` → get `InputData`.
+2. Print a header (optional) showing `N` and the reference sequence.
+3. For each algorithm (FIFO, MIN, LRU, Second Chance):
+   - Call the `run_*` function from Agent 2 or Agent 3.
+   - Let the algorithm function handle trace printing internally.
+   - Store or print the totals after each run.
+4. After all four algorithms finish, call `print_comparison_summary()` from Agent 3 to produce the final table.
+
+#### 1.5 Header file: `src/input.h`
+
+```c
+#ifndef INPUT_H
+#define INPUT_H
+
+#define MAX_SEQUENCE_LEN 1024
+#define MAX_FRAMES 64
+
+typedef struct {
+    int N;
+    int ref_len;
+    int ref_seq[MAX_SEQUENCE_LEN];
+} InputData;
+
+typedef struct {
+    int hits;
+    int misses;
+} AlgorithmResult;
+
+// Parse CLI args. Exits on error.
+InputData parse_input(int argc, char *argv[]);
+
+#endif
+```
+
+### Checklist for Agent 1
+
+- [ ] `src/input.h` created with all shared types (`InputData`, `AlgorithmResult`, constants).
+- [ ] `src/input.c` created with `parse_input()` implementation.
+- [ ] `argc` checked — usage message printed to `stderr` if wrong number of args.
+- [ ] `N` parsed with error checking (non‑integer → error, `N < 1` → error, `N > MAX_FRAMES` → error).
+- [ ] Reference string tokenized with `strtok()`.
+- [ ] Empty sequence detected and rejected.
+- [ ] Each token validated as a non‑negative integer (`>= 0`).
+- [ ] Sequence length validated against `MAX_SEQUENCE_LEN`.
+- [ ] All error messages printed to `stderr`, program exits with `EXIT_FAILURE`.
+- [ ] Parsed data stored in `InputData` struct, `ref_len` set correctly.
+- [ ] `main.c` created: calls `parse_input()`, then orchestrates algorithm runs.
+- [ ] `main.c` prints initial header: `"Frames: N=%d, Sequence length: %d"`.
+- [ ] `main.c` prints the reference sequence in a readable format.
+- [ ] `CMakeLists.txt` created at the project root:
+  - [ ] `cmake_minimum_required(VERSION 3.10)`.
+  - [ ] `project(page_replacement C)`.
+  - [ ] `add_executable(page_replacement src/main.c src/input.c src/algorithms.c src/trace.c src/second_chance.c)`.
+  - [ ] `target_compile_options(page_replacement PRIVATE -Wall -Wextra -std=c99 -g)`.
+- [ ] Project builds successfully: `mkdir build && cd build && cmake .. && make`.
+- [ ] Code compiles cleanly (`gcc -Wall -Wextra -std=c99 -c src/input.c`).
+- [ ] Write `README.md` with build instructions (using CMake) and usage examples.
+
+---
+
+## Agent 2 — Algorithm Implementations (`src/algorithms.h`, `src/algorithms.c`)
+
+### Responsibility
+
+Implement the three core page‑replacement algorithms: **FIFO**, **MIN (Optimal)**, and **LRU**. Each function receives the `InputData`, simulates the policy, and returns an `AlgorithmResult` with hit/miss counts. The functions also print the **step‑by‑step trace** (Agent 3's visual concern) as they simulate, so the trace is produced live during simulation.
+
+### Shared Memory Representation
+
+All algorithms work with a **frame table**: an array of size `N`, initialized to `-1` (representing an empty slot).
+
+```c
+int frames[MAX_FRAMES];  // -1 = empty
+int frame_count;          // how many frames are currently filled (0..N)
+```
+
+When a page is loaded into memory and all frames are full, one page is evicted. The algorithms differ only in **which page to evict**.
+
+### Common Simulation Loop (for reference)
+
+For each algorithm, the outer loop is the same:
+
+```
+hits = 0; misses = 0;
+frames[0..N-1] = -1; frame_count = 0;
+
+for step = 0 to ref_len-1:
+    page = ref_seq[step]
+
+    if page is in frames:
+        hits++
+        result = HIT
+        // For LRU: update last_use_time of this page
+    else:
+        misses++
+        result = MISS
+
+        if frame_count < N:
+            // free slot available
+            frames[frame_count] = page
+            frame_count++
+            victim = -1  // no eviction
+        else:
+            // full → evict one
+            victim = select_victim(...)   // policy-specific
+            replace victim's slot with page
+
+    // Print the step line (trace) — see Agent 3's format
+    print_trace_line(step, page, result, frames, N, victim)
+
+    // For FIFO: push page into arrival queue
+    // For LRU: update last_use_time of page
+    // For MIN: nothing (looks ahead)
+
+return { hits, misses }
+```
+
+> **Design decision:** Each algorithm function (`run_fifo`, `run_min`, `run_lru`) is self‑contained in `algorithms.c`. They call a shared `print_trace_line()` function provided by Agent 3 in `trace.h` / `trace.c`. This is the integration point between Agent 2 and Agent 3.
+
+### 2.1 FIFO Algorithm
+
+**Policy**: Evict the page that has been in memory the longest (first‑in, first‑out).
+
+**Implementation**:
+
+- Maintain a **queue** of page IDs in arrival order. Use a circular buffer or a simple array + `head`/`tail` indices.
+- When a page is loaded (miss, first time or after eviction): `enqueue(page)`.
+- On eviction: `victim = dequeue()` — the oldest page. Replace that victim's slot in `frames[]` with the new page. Then `enqueue(new_page)`.
+- On a hit: do **not** modify the queue (FIFO does not update on hits).
+
+**Queue data structure**:
+
+```c
+int queue[MAX_FRAMES];
+int q_head;  // index of oldest element
+int q_tail;  // where next element goes
+int q_size;  // current count
+```
+
+**Queue invariant**: `q_size == frame_count` at all times. Every page in `frames[]` appears exactly once in `queue`.
+
+**Finding the victim's frame index**: When you `dequeue()`, you get a page ID. Search `frames[]` for that page ID to find the slot index to overwrite.
+
+### 2.2 MIN (Optimal) Algorithm
+
+**Policy**: Evict the page whose next use is **farthest in the future**. If a page is never used again, it is an immediate eviction candidate.
+
+**Tie‑break rule** (documented): If multiple pages share the same farthest‑next index, or if multiple pages never appear again, **evict the one with the smallest page ID**.
+
+**Implementation**:
+
+For each eviction decision at step `current_step`:
+
+1. For each page `p` currently in `frames[]`:
+   - Scan `ref_seq[current_step+1 .. ref_len-1]` to find the **first** occurrence of `p`.
+   - If found, `next_use[p] = that index`.
+   - If not found, `next_use[p] = INFINITY` (a sentinel larger than any index, e.g., `INT_MAX`).
+2. Select the page with the **largest** `next_use` value.
+3. If there is a tie (multiple pages share the same `next_use` value), pick the one with the **smallest page ID** (numeric value).
+
+**Edge case**: At the very last reference (`current_step == ref_len - 1`), there is no future. Every page's `next_use` is `INFINITY`. The tie‑break (smallest page ID) selects the victim.
+
+**No state to maintain between steps**: MIN is a look‑ahead algorithm; it does not need any extra bookkeeping (unlike FIFO's queue or LRU's usage times).
+
+### 2.3 LRU Algorithm
+
+**Policy**: Evict the page whose **most recent use** is the farthest in the past (least recently used).
+
+**Tie‑break rule** (documented): If multiple pages share the same last‑use time, **evict the one with the smallest page ID**.
+
+**Important**: The **current** reference counts as "used" **after** the hit/miss decision. This means:
+
+- On a **hit**: you first determine it's a hit → then update `last_use[page] = current_step`.
+- On a **miss**: you load the page (possibly evicting) → then update `last_use[page] = current_step` for the newly loaded page.
+
+**Implementation**:
+
+- Maintain `int last_use_time[MAX_SEQUENCE_LEN]` (or a hash map / array indexed by page ID). Since we don't know the max page ID in advance, use an array of size large enough (e.g., dynamic allocation based on max page ID found, or use a fixed sentinel like `-1` for "never used" and size the array based on the max page ID in the sequence).
+- **Simpler approach**: Only pages in the reference sequence matter. Pre‑scan the sequence to find the maximum page ID, then `malloc` an array of that size + 1. Initialize all entries to `-1` (meaning "never used").
+- At each step, after handling the reference:
+  - Set `last_use_time[page] = current_step` (or simply the step index).
+- On eviction:
+  - For each page `p` in `frames[]`, check `last_use_time[p]`.
+  - The page with the **smallest** `last_use_time` is the LRU victim.
+  - Tie‑break: smallest page ID.
+
+### 2.4 Trace Printing Integration
+
+Each algorithm function calls a shared `print_trace_line()` **at every step** (after handling the reference, before moving to the next). The signature, provided by Agent 3 in `trace.h`:
+
+```c
+// Called by algorithm functions to print one step of the trace.
+// step:     0‑based step index (printed as step+1)
+// page:     the referenced page ID
+// is_hit:   1 for HIT, 0 for MISS
+// frames:   the frame array after handling this reference
+// N:        number of frames
+// victim:   the page ID that was evicted, or -1 if no eviction occurred
+void print_trace_line(int step, int page, int is_hit, int frames[], int N, int victim);
+```
+
+Agent 3 also provides a per‑algorithm header:
+
+```c
+// Print the algorithm header, e.g. "FIFO (N=3)"
+void print_algorithm_header(const char *algo_name, int N);
+```
+
+And a footer:
+
+```c
+// Print the totals for one algorithm
+void print_algorithm_totals(int hits, int misses);
+```
+
+### Checklist for Agent 2
+
+- [ ] `src/algorithms.h` created — declares `run_fifo()`, `run_min()`, `run_lru()`.
+- [ ] `src/algorithms.c` implements all three functions.
+- [ ] `#include "input.h"` and `#include "trace.h"` in `algorithms.c`.
+- [ ] Each function signature: `AlgorithmResult run_xxx(const InputData *input)`.
+- [ ] **FIFO**
+  - [ ] Queue data structure with `head`, `tail`, `size`.
+  - [ ] Queue initialized empty at start.
+  - [ ] On miss with free slot: `enqueue(page)`, no victim (`-1`).
+  - [ ] On miss with full frames: `victim = dequeue()`, search frames for victim slot, overwrite, `enqueue(new_page)`.
+  - [ ] On hit: queue unchanged (no re‑ordering).
+  - [ ] Victim correctly set to evicted page ID or `-1`.
+- [ ] **MIN (Optimal)**
+  - [ ] For each eviction, scans `ref_seq[current_step+1 .. end]` for each resident page.
+  - [ ] `next_use` computed correctly. Pages never seen again → `INT_MAX`.
+  - [ ] Selects page with **maximum** `next_use`.
+  - [ ] **Tie‑break**: smallest page ID when `next_use` values are equal.
+  - [ ] Last step edge case handled (all `INT_MAX`, smallest page ID evicted).
+  - [ ] No side state — pure look‑ahead.
+- [ ] **LRU**
+  - [ ] `last_use_time[]` array allocated to cover the max page ID in the sequence.
+  - [ ] Initialized to `-1` ("never used").
+  - [ ] `last_use_time` updated **after** hit/miss decision (current reference counts).
+  - [ ] On eviction: page with **smallest** `last_use_time` evicted.
+  - [ ] **Tie‑break**: smallest page ID.
+  - [ ] `free(last_use_time)` at end of function.
+- [ ] Each function prints `print_algorithm_header()` at start.
+- [ ] Each function calls `print_trace_line()` for every reference.
+- [ ] Each function prints `print_algorithm_totals()` at end.
+- [ ] Returned `AlgorithmResult` has correct `hits` and `misses` counts.
+- [ ] Code compiles: `gcc -Wall -Wextra -c algorithms.c`.
+
+---
+
+## Agent 3 — Trace Output, Comparison Summary & Second Chance (`src/trace.h`, `src/trace.c`, `src/second_chance.h`, `src/second_chance.c`)
+
+### Responsibility
+
+Agent 3 has **three deliverables**:
+
+1. **Trace formatting functions** — `print_trace_line()`, `print_algorithm_header()`, `print_algorithm_totals()` — used by Agent 2's algorithm functions.
+2. **Comparison summary table** — `print_comparison_summary()` — called by `main.c` after all algorithms run.
+3. **Second Chance (Clock) algorithm** — a fourth policy, implemented in `second_chance.c`.
+
+### 3.1 Trace Formatting (`src/trace.h`, `src/trace.c`)
+
+#### 3.1.1 `print_algorithm_header()`
+
+```
+void print_algorithm_header(const char *algo_name, int N);
+```
+
+Prints:
+
+```
+========================================
+ALGORITHM_NAME (N=3)
+========================================
+step  ref   result  frames           victim
+----- ----- ------  ---------------  ------
+```
+
+- The algorithm name is passed as a string: `"FIFO"`, `"MIN"`, `"LRU"`, or `"SECOND CHANCE"`.
+- The separator lines use `=` (50 chars) for the outer and `-` for the column headers.
+- Column widths (suggested):
+  - `step`: 5 chars, right‑aligned
+  - `ref`: 5 chars, right‑aligned
+  - `result`: 6 chars, centered
+  - `frames`: width depends on `N`. Format: `[ p1, p2, ..., pN ]` where empty slots are `_` (underscore). Minimum width 15.
+  - `victim`: 6 chars. Print `-` if no victim (i.e., victim == -1), otherwise the page ID.
+
+#### 3.1.2 `print_trace_line()`
+
+```
+void print_trace_line(int step, int page, int is_hit, int frames[], int N, int victim);
+```
+
+- `step`: 0‑based index. Print (step + 1) as the step number.
+- `page`: the referenced page ID.
+- `is_hit`: 1 → print `"HIT"`, 0 → print `"MISS"`.
+- `frames[]`: the frame contents after this step. Empty slots = `-1`, print as `_`.
+- `victim`: the evicted page ID, or `-1` if none. Print `-` if `-1`, otherwise the number.
+
+**Example output line:**
+
+```
+    1     7   MISS   [ 7, _, _ ]       -
+    2     0   MISS   [ 7, 0, _ ]       -
+    3     1   MISS   [ 7, 0, 1 ]       -
+    4     2   MISS   [ 2, 0, 1 ]       7
+    5     0    HIT   [ 2, 0, 1 ]       -
+```
+
+**Frames formatting**: Build a string `[ p1, p2, ..., pN ]` where each `-1` becomes `_` and each page ID is printed as a number. Use `snprintf` or manual concatenation.
+
+#### 3.1.3 `print_algorithm_totals()`
+
+```
+void print_algorithm_totals(int hits, int misses);
+```
+
+Prints:
+
+```
+Totals: hits=12 misses=8, hit rate = 60.00%
+```
+
+- Hit rate formula: `hits / (hits + misses) * 100.0`.
+- Print with **two decimal places** (`%.2f`).
+- Handle the edge case where `hits + misses == 0` (shouldn't happen with valid input, but print `0.00%` just in case).
+
+### 3.2 Comparison Summary Table (`src/trace.c`)
+
+```
+void print_comparison_summary(AlgorithmResult fifo, AlgorithmResult min, AlgorithmResult lru, AlgorithmResult sc);
+```
+
+Prints a table at the very end of the program:
+
+```
+========================================
+        COMPARISON SUMMARY
+========================================
+Algorithm       Hits    Misses  Hit Rate
+-----------  -------  -------  --------
+FIFO               12        8    60.00%
+MIN                14        6    70.00%
+LRU                12        8    60.00%
+SECOND CHANCE      12        8    60.00%
+========================================
+```
+
+- Columns: Algorithm name (14 chars, left‑aligned), Hits (7 chars, right‑aligned), Misses (7 chars, right‑aligned), Hit Rate (8 chars, right‑aligned).
+- Hit rate formatted as `XX.XX%` with two decimals.
+- Use a separator line (`---`) before the footer `===`.
+- All four results come from `AlgorithmResult` structs passed by `main.c`.
+
+### 3.3 Second Chance / Clock Algorithm (`src/second_chance.h`, `src/second_chance.c`)
+
+#### Policy Description
+
+Second Chance is an enhancement of FIFO that uses a **reference bit** per frame. It's also called the **Clock algorithm** because frames are arranged in a circular list.
+
+- Each frame has: a page ID, and a **reference bit** (0 or 1).
+- A **clock hand** (pointer) cycles through frames circularly.
+- On a page hit: set that page's reference bit to 1.
+- On a page miss (eviction needed):
+  1. Advance the clock hand.
+  2. If the current frame's reference bit is 0 → evict that page.
+  3. If the reference bit is 1 → clear it to 0 (give it a "second chance") and advance to the next frame.
+  4. Repeat until a frame with reference bit 0 is found.
+- After eviction: load the new page into that frame, set its reference bit to 1 (since it was just accessed), and advance the hand to the next position.
+
+> **Note:** The clock hand points to the **next frame to examine**, not the last evicted frame. After an eviction at position `k`, the hand moves to `(k + 1) % N`.
+
+#### Data Structures
+
+```c
+typedef struct {
+    int page;   // page ID stored, or -1 if empty
+    int ref;    // reference bit: 0 or 1
+} ClockFrame;
+
+ClockFrame clock_frames[MAX_FRAMES];
+int clock_hand;   // index (0..N-1) of the next frame to examine
+int frame_count;  // how many frames are occupied (0..N)
+```
+
+#### Algorithm Steps
+
+**Initialization:**
+
+- `clock_hand = 0`
+- `frame_count = 0`
+- All `clock_frames[i].page = -1`, `clock_frames[i].ref = 0`
+
+**For each reference (page = ref_seq[step]):**
+
+1. **Check if page is in memory:**
+   - If `page` is in `clock_frames[0..N-1].page`:
+     - **HIT**. Increment hits.
+     - Set that frame's `ref = 1`.
+     - `victim = -1`.
+     - → Go to trace print.
+
+2. **MISS**. Increment misses.
+   - If `frame_count < N` (free slot exists):
+     - Find the first `clock_frames[i].page == -1`.
+     - Load page there: `page = page, ref = 1`.
+     - `frame_count++`.
+     - `victim = -1`.
+     - → Go to trace print.
+   - Else (all frames full — must evict):
+     - Loop:
+       - If `clock_frames[clock_hand].ref == 0`:
+         - `victim = clock_frames[clock_hand].page`
+         - Replace: `clock_frames[clock_hand].page = page`, `ref = 1`
+         - `clock_hand = (clock_hand + 1) % N`
+         - Break out of loop.
+       - Else (`ref == 1`):
+         - `clock_frames[clock_hand].ref = 0` (clear the bit — second chance given)
+         - `clock_hand = (clock_hand + 1) % N`
+         - Continue loop.
+
+3. **Print trace line** (same format as other algorithms; `frames[]` extracted from `clock_frames[].page`).
+
+**Note on tracing**: Convert `ClockFrame clock_frames[]` to a plain `int frames[N]` array before calling `print_trace_line()` by copying `clock_frames[i].page` for `i = 0..N-1`.
+
+#### Function Signature
+
+```c
+AlgorithmResult run_second_chance(const InputData *input);
+```
+
+Implemented in `src/second_chance.c`, declared in `src/second_chance.h`.
+
+Same structure as Agent 2's functions: prints header, loops through references, prints trace lines, prints totals, returns `AlgorithmResult`.
+
+### Checklist for Agent 3
+
+#### Trace Formatting
+
+- [ ] `src/trace.h` created — declares `print_trace_line`, `print_algorithm_header`, `print_algorithm_totals`, `print_comparison_summary`.
+- [ ] `src/trace.c` implements all four functions.
+- [ ] `#include "input.h"` in `trace.h`.
+- [ ] `print_algorithm_header()`:
+  - [ ] Prints outer separator (`===`, ~50 chars).
+  - [ ] Prints algorithm name and `(N=X)`.
+  - [ ] Prints inner separator.
+  - [ ] Prints column headers: `step`, `ref`, `result`, `frames`, `victim`.
+  - [ ] Prints column separator (`-----`).
+- [ ] `print_trace_line()`:
+  - [ ] Step printed as 1‑based (`step + 1`), right‑aligned in 5 chars.
+  - [ ] `ref` right‑aligned in 5 chars.
+  - [ ] `result`: `"HIT"` or `"MISS"` centered in 6 chars.
+  - [ ] `frames`: `[ p1, p2, ..., pN ]` format. `-1` → `_`. Width adapts to N.
+  - [ ] `victim`: page ID or `-`. Printed right‑aligned.
+- [ ] `print_algorithm_totals()`:
+  - [ ] Prints `hits=X misses=Y, hit rate = ZZ.ZZ%`.
+  - [ ] Hit rate with exactly 2 decimal places.
+  - [ ] Edge case: `hits + misses == 0` → `0.00%`.
+- [ ] `print_comparison_summary()`:
+  - [ ] Title centered or labeled.
+  - [ ] Table with columns: Algorithm, Hits, Misses, Hit Rate.
+  - [ ] All four algorithms listed (FIFO, MIN, LRU, SECOND CHANCE).
+  - [ ] Hit rate with 2 decimals.
+  - [ ] Closing separator line.
+
+#### Second Chance / Clock Algorithm
+
+- [ ] `src/second_chance.h` created — declares `run_second_chance()`.
+- [ ] `src/second_chance.c` implements `run_second_chance()`.
+- [ ] `ClockFrame` struct defined with `page` and `ref` fields.
+- [ ] `clock_hand` initialized to 0 at start.
+- [ ] On hit: sets reference bit of the matching frame to 1. Does **not** move the clock hand.
+- [ ] On miss with free slot: loads page, sets `ref = 1`, does **not** move clock hand.
+- [ ] On miss with full frames:
+  - [ ] Loop until a frame with `ref == 0` is found.
+  - [ ] Frames with `ref == 1` get their bit cleared and hand advances.
+  - [ ] Victim correctly identified.
+  - [ ] New page loaded with `ref = 1`.
+  - [ ] Clock hand advances **once more** after replacement.
+- [ ] Calls `print_algorithm_header("SECOND CHANCE", N)` at start.
+- [ ] Calls `print_trace_line()` for each reference.
+- [ ] Prints totals at end.
+- [ ] Returns correct `AlgorithmResult`.
+- [ ] Code compiles: `gcc -Wall -Wextra -c trace.c second_chance.c`.
+
+### Comparison to FIFO
+
+The Second Chance algorithm is designed to improve upon FIFO by giving pages a "second chance" before eviction. On the reference dataset with N=3, Second Chance may perform **identically to FIFO** or slightly better, depending on the access pattern. Document the observed result in the trace output (the comparison table handles this automatically).
+
+---
+
+## Integration & Build
+
+### CMakeLists.txt (Agent 1)
+
+Create `CMakeLists.txt` at the project root (`cc7-lab10-page-replacement/CMakeLists.txt`):
+
+```cmake
+cmake_minimum_required(VERSION 3.10)
+project(page_replacement C)
+
+set(SOURCES
+    src/main.c
+    src/input.c
+    src/algorithms.c
+    src/trace.c
+    src/second_chance.c
+)
+
+add_executable(page_replacement ${SOURCES})
+
+target_compile_options(page_replacement PRIVATE -Wall -Wextra -std=c99 -g)
+```
+
+**Build instructions** (from the project root):
+
+```sh
+mkdir -p build
+cd build
+cmake ..
+make
+```
+
+The executable will be at `build/page_replacement`. To run:
+
+```sh
+./build/page_replacement 3 "7 0 1 2 0 3 0 4 2 3 0 3 2 1 2 0 1 7 0 1"
+```
+
+To clean:
+
+```sh
+rm -rf build
+```
+
+### Expected Output Sanity Check
+
+Running with the required dataset:
+
+```
+./page_replacement 3 "7 0 1 2 0 3 0 4 2 3 0 3 2 1 2 0 1 7 0 1"
+```
+
+- **MIN** should have the **fewest misses** (fewest page faults) — this is the defining property of the optimal algorithm.
+- **FIFO** and **LRU** typically have more misses; on this specific string with N=3, both will likely have the same or similar counts.
+- **Second Chance** may match FIFO or LRU depending on the pattern.
+- Total references: 20, so `hits + misses == 20` for every algorithm.
+
+---
+
+## Summary of Files and Ownership
+
+| File                           | Agent    | Purpose                                       |
+| ------------------------------ | -------- | --------------------------------------------- |
+| `docs/implementation-guide.md` | (shared) | This guide                                    |
+| `src/input.h`                  | Agent 1  | Shared types, `parse_input()` declaration     |
+| `src/input.c`                  | Agent 1  | CLI parsing and validation                    |
+| `src/main.c`                   | Agent 1  | Entry point, orchestration                    |
+| `src/algorithms.h`             | Agent 2  | `run_fifo`, `run_min`, `run_lru` declarations |
+| `src/algorithms.c`             | Agent 2  | FIFO, MIN, LRU implementations                |
+| `src/trace.h`                  | Agent 3  | Trace & summary function declarations         |
+| `src/trace.c`                  | Agent 3  | Trace formatting, comparison table            |
+| `src/second_chance.h`          | Agent 3  | `run_second_chance` declaration               |
+| `src/second_chance.c`          | Agent 3  | Second Chance / Clock implementation          |
+| `CMakeLists.txt`               | Agent 1  | Build automation                              |
+| `README.md`                    | Agent 1  | Usage and build instructions                  |
+
+---
+
+## Notes for All Agents
+
+1. **Constants**: Use `MAX_FRAMES` and `MAX_SEQUENCE_LEN` from `input.h`; do not redefine them.
+2. **Error handling**: Agent 1 handles all input errors. Agents 2 and 3 assume valid `InputData`.
+3. **Memory management**: If you `malloc`, always `free`. Agent 2's LRU needs dynamic allocation for `last_use_time`; free it at the end.
+4. **Compilation**: Each `.c` file should compile independently (`gcc -c`). Final linking uses CMake (`mkdir build && cd build && cmake .. && make`). The executable is produced as `build/page_replacement`.
+5. **Tie‑break documentation**: Both MIN and LRU use "smallest page ID" as the tie‑break. This is documented in the code comments and should be visible in the trace comments.
+6. **No global variables**: All state should be local to each algorithm function.
+7. **No external libraries**: Use only the C standard library (`stdio.h`, `stdlib.h`, `string.h`, `limits.h`, `ctype.h`).
