@@ -1,6 +1,6 @@
 # Page Replacement Simulator
 
-This project simulates four page-replacement algorithms: **FIFO**, **MIN (Optimal)**, **LRU**, and **Second Chance (Clock)**. It reads a frame count and a reference sequence of page IDs from the command line, runs each algorithm, prints a step-by-step trace, and displays a comparison summary.
+This project simulates four page-replacement algorithms: **FIFO**, **MIN (Optimal)**, **LRU**, and **Clock**. It reads a frame count and a reference sequence of page IDs from the command line, runs each algorithm, prints a step-by-step trace, and displays a comparison summary.
 
 ## Build Instructions
 
@@ -39,12 +39,12 @@ rm -rf build
 
 ## Algorithms
 
-| Algorithm         | Description                                                             |
-| ----------------- | ----------------------------------------------------------------------- |
-| **FIFO**          | Evicts the page that has been in memory the longest.                    |
-| **MIN**           | Evicts the page whose next use is farthest in the future.               |
-| **LRU**           | Evicts the page that was least recently used.                           |
-| **Second Chance** | FIFO with a reference bit; pages get a "second chance" before eviction. |
+| Algorithm | Description                                                             |
+| --------- | ----------------------------------------------------------------------- |
+| **FIFO**  | Evicts the page that has been in memory the longest.                    |
+| **MIN**   | Evicts the page whose next use is farthest in the future.               |
+| **LRU**   | Evicts the page that was least recently used.                           |
+| **Clock** | FIFO with a reference bit; pages get a "second chance" before eviction. |
 
 ## Project Structure
 
@@ -54,10 +54,12 @@ rm -rf build
 │   ├── main.c               # Entry point
 │   ├── input.h              # Shared types & parse_input declaration
 │   ├── input.c              # CLI parsing and validation
-│   ├── algorithms.h         # Algorithm declarations (FIFO, MIN, LRU, Second Chance)
-│   ├── algorithms.c         # Algorithm implementations (FIFO, MIN, LRU, Second Chance)
+│   ├── algorithms.h         # Algorithm declarations (FIFO, MIN, LRU)
+│   ├── algorithms.c         # Algorithm implementations (FIFO, MIN, LRU)
 │   ├── trace.h              # Trace & summary declarations
 │   ├── trace.c              # Trace formatting & comparison table
+│   ├── clock.h              # Clock algorithm declaration
+│   ├── clock.c              # Clock implementation
 └── docs/
     └── implementation-guide.md
 ```
