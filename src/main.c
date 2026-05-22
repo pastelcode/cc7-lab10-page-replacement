@@ -1,4 +1,5 @@
 #include "algorithms.h"
+#include "clock.h"
 #include "input.h"
 #include "trace.h"
 #include <stdio.h>
@@ -26,11 +27,11 @@ int main(int argc, char *argv[]) {
   // Run LRU
   AlgorithmResult lru_result = run_lru(&data);
 
-  // Run Second Chance (Clock)
-  AlgorithmResult sc_result = run_second_chance(&data);
+  // Run Clock
+  AlgorithmResult clock_result = run_clock(&data);
 
   // Print comparison summary
-  print_comparison_summary(fifo_result, min_result, lru_result, sc_result);
+  print_comparison_summary(fifo_result, min_result, lru_result, clock_result);
 
   return 0;
 }

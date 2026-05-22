@@ -8,6 +8,7 @@ set(SOURCES
     src/input.c
     src/algorithms.c
     src/trace.c
+    src/clock.c
 )
 
 add_executable(page_replacement ${SOURCES})

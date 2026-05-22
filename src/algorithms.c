@@ -250,15 +250,3 @@ AlgorithmResult run_lru(const InputData *input) {
   AlgorithmResult result = {hits, misses};
   return result;
 }
-
-// ── Second Chance (stub — Agent 3 will move to its own files) ───────────────
-
-AlgorithmResult run_second_chance(const InputData *input) {
-  // TODO: Implement by Agent 3 — currently a stub
-  print_algorithm_header("SECOND CHANCE", input->N);
-
-  AlgorithmResult result = {0, 0};
-
-  print_algorithm_totals(result.hits, result.misses);
-  return result;
-}
